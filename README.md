@@ -4,16 +4,21 @@ A Go-based application with React frontend for managing Azure DevOps backlog ite
 
 ## Features
 
-- View Azure DevOps work items (User Stories, Product Backlog Items, Bugs, Tasks)
-- Create new work items
-- Edit existing work items (title, description, state)
-- Modern React frontend with responsive design
-- Dockerized for easy deployment
+- **Azure DevOps PAT Authentication** - Secure login with Personal Access Tokens
+- **Area Path Management** - Hierarchical project organization with area path selection
+- **Work Item Tagging** - Add and manage tags using Azure DevOps System.Tags field
+- **Advanced Filtering** - Filter work items by area path and work item type
+- **Complete Work Item Management** - View, create, edit work items (User Stories, Tasks, Bugs, etc.)
+- **Work Item Type Selection** - Support for Epic, Feature, Task, Bug, Test Case, and more
+- **Modern React Frontend** - Responsive design with professional Azure DevOps styling
+- **Session Management** - Persistent authentication with secure token handling
+- **Dockerized Deployment** - Easy deployment with multi-container setup
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Azure DevOps Personal Access Token (PAT) with Work Items (read & write) permissions
+- Azure DevOps organization and project access
+- Azure DevOps Personal Access Token (PAT) with appropriate permissions
 
 ## Setup
 
@@ -23,22 +28,22 @@ A Go-based application with React frontend for managing Azure DevOps backlog ite
    cd azure-devops-board-manager
    ```
 
-2. **Configure environment variables**
+2. **Generate Personal Access Token**
+   - Go to Azure DevOps → User Settings → Personal Access Tokens
+   - Create new token with the following permissions:
+     - Work Items (read & write) - Required for work item management
+     - Project and Team (read) - Required for area path retrieval
+   - Copy the token for use during login
+
+3. **Start the application**
    ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` file with your Azure DevOps details:
-   ```
-   AZURE_DEVOPS_ORG=your-organization
-   AZURE_DEVOPS_PROJECT=your-project
-   AZURE_DEVOPS_PAT=your-personal-access-token
+   docker-compose up -d
    ```
 
-3. **Generate Personal Access Token**
-   - Go to Azure DevOps → User Settings → Personal Access Tokens
-   - Create new token with "Work Items" read & write permissions
-   - Copy the token to your `.env` file
+4. **Access the application**
+   - Open http://localhost:3000 in your browser
+   - Login with your Azure DevOps organization name, project name, and PAT
+   - Start managing your work items!
 
 ## Running the Application
 
@@ -58,10 +63,20 @@ The application will be available at:
 
 ## API Endpoints
 
-- `GET /api/workitems` - Get all work items
-- `POST /api/workitems` - Create new work item
-- `PATCH /api/workitems/:id` - Update work item
-- `GET /health` - Health check
+### Authentication
+- `POST /api/login` - Authenticate with Azure DevOps PAT
+- `POST /api/logout` - End user session
+
+### Work Items
+- `GET /api/workitems` - Get all work items (authenticated)
+- `POST /api/workitems` - Create new work item (authenticated)
+- `PATCH /api/workitems/:id` - Update work item (authenticated)
+
+### Project Resources
+- `GET /api/areapaths` - Get project area paths (authenticated)
+
+### System
+- `GET /health` - Health check (no authentication required)
 
 ## Architecture
 
