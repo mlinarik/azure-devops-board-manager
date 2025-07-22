@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, X } from 'lucide-react';
+import { Plus, Edit, X, LogOut } from 'lucide-react';
 import axios from 'axios';
+import Login from './Login';
 
 const API_BASE_URL = process.env.NODE_ENV === 'production' 
   ? '/api' 
@@ -13,6 +14,8 @@ function App() {
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userInfo, setUserInfo] = useState(null);
   const [filters, setFilters] = useState({
     areaPath: '',
     workItemType: ''
@@ -27,9 +30,81 @@ function App() {
   });
 
   useEffect(() => {
+    // Check for existing authentication
+    const token = localStorage.getItem('authToken');
+    const organization = localStorage.getItem('organization');
+    const project = localStorage.getItem('project');
+    
+    if (token && organization && project) {
+      setIsAuthenticated(true);
+      setUserInfo({ organization, project });
+      setupAxiosInterceptor(token);
+      fetchWorkItems();
+      fetchAreaPaths();
+    } else {
+      setLoading(false);
+    }
+  }, []);
+
+  // Setup axios interceptor for authentication
+  const setupAxiosInterceptor = (token) => {
+    // Add request interceptor to include auth token
+    axios.interceptors.request.use(
+      (config) => {
+        if (token) {
+          config.headers['X-Auth-Token'] = token;
+        }
+        return config;
+      },
+      (error) => {
+        return Promise.reject(error);
+      }
+    );
+
+    // Add response interceptor to handle auth errors
+    axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error.response?.status === 401) {
+          handleLogout();
+        }
+        return Promise.reject(error);
+      }
+    );
+  };
+
+  const handleLogin = (loginData) => {
+    setIsAuthenticated(true);
+    setUserInfo({
+      organization: loginData.organization,
+      project: loginData.project
+    });
+    setupAxiosInterceptor(loginData.token);
     fetchWorkItems();
     fetchAreaPaths();
-  }, []);
+  };
+
+  const handleLogout = async () => {
+    try {
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        await axios.post(`${API_BASE_URL}/logout`);
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    } finally {
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('organization');
+      localStorage.removeItem('project');
+      setIsAuthenticated(false);
+      setUserInfo(null);
+      setWorkItems([]);
+      setAreaPaths([]);
+      // Clear axios interceptors
+      axios.interceptors.request.clear();
+      axios.interceptors.response.clear();
+    }
+  };
 
   const fetchWorkItems = async () => {
     try {
@@ -222,6 +297,10 @@ function App() {
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
 
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   if (loading) {
     return (
       <div className="loading">
@@ -234,7 +313,21 @@ function App() {
     <div className="App">
       <header className="header">
         <div className="container">
-          <h1>Azure DevOps Board Manager</h1>
+          <div className="header-content">
+            <h1>Azure DevOps Board Manager</h1>
+            <div className="header-info">
+              <span className="user-info">
+                {userInfo?.organization}/{userInfo?.project}
+              </span>
+              <button 
+                className="btn btn-secondary logout-btn"
+                onClick={handleLogout}
+                title="Logout"
+              >
+                <LogOut size={16} /> Logout
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
