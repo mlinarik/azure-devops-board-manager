@@ -66,6 +66,18 @@ type WorkItemUpdate struct {
 	Value interface{} `json:"value"`
 }
 
+type WorkItemRelation struct {
+	Rel        string                 `json:"rel"`
+	URL        string                 `json:"url"`
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
+}
+
+type WorkItemWithRelations struct {
+	ID        int                    `json:"id"`
+	Fields    map[string]interface{} `json:"fields"`
+	Relations []WorkItemRelation     `json:"relations,omitempty"`
+}
+
 type AzureDevOpsClient struct {
 	Organization string
 	Project      string
@@ -156,7 +168,7 @@ func (client *AzureDevOpsClient) GetWorkItems() ([]WorkItem, error) {
 	// First get work item IDs using a WIQL query
 	wiqlURL := fmt.Sprintf("%s/wit/wiql?api-version=6.0", client.BaseURL)
 	wiqlQuery := map[string]string{
-		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Task', 'Epic', 'Feature') ORDER BY [System.Id]", client.Project),
+		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Epic', 'Feature') ORDER BY [System.Id]", client.Project),
 	}
 	
 	queryBody, _ := json.Marshal(wiqlQuery)
@@ -326,6 +338,93 @@ func (client *AzureDevOpsClient) GetAreaPaths() ([]AreaPathResponse, error) {
 	return areaPaths, nil
 }
 
+// GetWorkItemWithRelations retrieves a work item with its relationships
+func (client *AzureDevOpsClient) GetWorkItemWithRelations(id int) (*WorkItemWithRelations, error) {
+	url := fmt.Sprintf("%s/wit/workitems/%d?$expand=relations&api-version=6.0", client.BaseURL, id)
+	
+	resp, err := client.makeRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get work item: %s", resp.Status)
+	}
+
+	var workItem WorkItemWithRelations
+	if err := json.NewDecoder(resp.Body).Decode(&workItem); err != nil {
+		return nil, err
+	}
+
+	return &workItem, nil
+}
+
+// AddWorkItemRelation adds a parent-child relationship between work items
+func (client *AzureDevOpsClient) AddWorkItemRelation(childId, parentId int, relType string) error {
+	url := fmt.Sprintf("%s/wit/workitems/%d?api-version=6.0", client.BaseURL, childId)
+	
+	// Create the relationship URL for the parent
+	parentUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/wit/workitems/%d", client.Organization, client.Project, parentId)
+	
+	updates := []WorkItemUpdate{
+		{
+			Op:   "add",
+			Path: "/relations/-",
+			Value: WorkItemRelation{
+				Rel: relType,
+				URL: parentUrl,
+			},
+		},
+	}
+
+	body, err := json.Marshal(updates)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.makeRequest("PATCH", url, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to add work item relation: %s", resp.Status)
+	}
+
+	return nil
+}
+
+// RemoveWorkItemRelation removes a relationship between work items
+func (client *AzureDevOpsClient) RemoveWorkItemRelation(workItemId int, relationIndex int) error {
+	url := fmt.Sprintf("%s/wit/workitems/%d?api-version=6.0", client.BaseURL, workItemId)
+	
+	updates := []WorkItemUpdate{
+		{
+			Op:   "remove",
+			Path: fmt.Sprintf("/relations/%d", relationIndex),
+		},
+	}
+
+	body, err := json.Marshal(updates)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.makeRequest("PATCH", url, bytes.NewBuffer(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to remove work item relation: %s", resp.Status)
+	}
+
+	return nil
+}
+
 // Global variable to store authenticated clients
 var clients = make(map[string]*AzureDevOpsClient)
 
@@ -485,6 +584,81 @@ func main() {
 			}
 
 			c.JSON(http.StatusCreated, workItem)
+		})
+
+		// Get work item with relationships
+		api.GET("/workitems/:id/relations", func(c *gin.Context) {
+			client := c.MustGet("client").(*AzureDevOpsClient)
+			idStr := c.Param("id")
+			id, err := strconv.Atoi(idStr)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid work item ID"})
+				return
+			}
+
+			workItem, err := client.GetWorkItemWithRelations(id)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, workItem)
+		})
+
+		// Add work item relationship
+		api.POST("/workitems/:id/relations", func(c *gin.Context) {
+			client := c.MustGet("client").(*AzureDevOpsClient)
+			idStr := c.Param("id")
+			childId, err := strconv.Atoi(idStr)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid work item ID"})
+				return
+			}
+
+			var req struct {
+				ParentId int    `json:"parentId"`
+				RelType  string `json:"relType"`
+			}
+
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			err = client.AddWorkItemRelation(childId, req.ParentId, req.RelType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "Relationship added successfully"})
+		})
+
+		// Remove work item relationship
+		api.DELETE("/workitems/:id/relations/:index", func(c *gin.Context) {
+			client := c.MustGet("client").(*AzureDevOpsClient)
+			idStr := c.Param("id")
+			indexStr := c.Param("index")
+
+			workItemId, err := strconv.Atoi(idStr)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid work item ID"})
+				return
+			}
+
+			relationIndex, err := strconv.Atoi(indexStr)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid relation index"})
+				return
+			}
+
+			err = client.RemoveWorkItemRelation(workItemId, relationIndex)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "Relationship removed successfully"})
 		})
 
 		api.POST("/logout", func(c *gin.Context) {

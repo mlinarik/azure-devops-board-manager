@@ -18,16 +18,29 @@ function App() {
   const [userInfo, setUserInfo] = useState(null);
   const [filters, setFilters] = useState({
     areaPath: '',
-    workItemType: ''
+    workItemType: '',
+    tag: '',
+    selectedStates: [],
+    selectedTags: []
   });
+  const [showStateDropdown, setShowStateDropdown] = useState(false);
+  const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     state: 'New',
     workItemType: '',
     areaPath: '',
-    tags: ''
+    tags: '',
+    effort: '',
+    businessValue: '',
+    acceptanceCriteria: '',
+    discussionComment: '',
+    parentId: '',
+    childIds: []
   });
+  const [availableWorkItems, setAvailableWorkItems] = useState([]);
+  const [workItemRelations, setWorkItemRelations] = useState({});
 
   useEffect(() => {
     // Check for existing authentication
@@ -45,6 +58,23 @@ function App() {
       setLoading(false);
     }
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showStateDropdown && !event.target.closest('.custom-dropdown.state-dropdown')) {
+        setShowStateDropdown(false);
+      }
+      if (showTagDropdown && !event.target.closest('.custom-dropdown.tag-dropdown')) {
+        setShowTagDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showStateDropdown, showTagDropdown]);
 
   // Setup axios interceptor for authentication
   const setupAxiosInterceptor = (token) => {
@@ -110,12 +140,54 @@ function App() {
     try {
       setLoading(true);
       const response = await axios.get(`${API_BASE_URL}/workitems`);
-      setWorkItems(response.data || []);
+      const items = response.data || [];
+      setWorkItems(items);
+      setAvailableWorkItems(items); // For parent/child selection
+      
+      // Fetch relationships for all work items
+      const relationsMap = {};
+      for (const item of items) {
+        const relationData = await fetchWorkItemRelations(item.id);
+        if (relationData && relationData.relations) {
+          relationsMap[item.id] = relationData.relations;
+        }
+      }
+      setWorkItemRelations(relationsMap);
+      
       setError(null);
     } catch (err) {
       setError('Failed to fetch work items: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchWorkItemRelations = async (workItemId) => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/workitems/${workItemId}/relations`);
+      return response.data;
+    } catch (err) {
+      console.error('Failed to fetch work item relations:', err);
+      return null;
+    }
+  };
+
+  const addWorkItemRelation = async (childId, parentId) => {
+    try {
+      await axios.post(`${API_BASE_URL}/workitems/${childId}/relations`, {
+        parentId: parentId,
+        relType: 'System.LinkTypes.Hierarchy-Forward'
+      });
+    } catch (err) {
+      throw new Error('Failed to add relationship: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const removeWorkItemRelation = async (workItemId, relationIndex) => {
+    try {
+      await axios.delete(`${API_BASE_URL}/workitems/${workItemId}/relations/${relationIndex}`);
+    } catch (err) {
+      throw new Error('Failed to remove relationship: ' + (err.response?.data?.error || err.message));
     }
   };
 
@@ -135,6 +207,23 @@ function App() {
     return [...new Set(types)].sort();
   };
 
+  // Get unique tags from all work items
+  const getUniqueTags = () => {
+    const allTags = workItems
+      .map(item => item.fields['System.Tags'])
+      .filter(Boolean)
+      .flatMap(tagString => tagString.split(';'))
+      .map(tag => tag.trim())
+      .filter(tag => tag.length > 0);
+    return [...new Set(allTags)].sort();
+  };
+
+  // Get unique states from all work items
+  const getUniqueStates = () => {
+    const states = workItems.map(item => item.fields['System.State']).filter(Boolean);
+    return [...new Set(states)].sort();
+  };
+
   // Filter work items based on current filters
   const getFilteredWorkItems = () => {
     return workItems.filter(workItem => {
@@ -144,7 +233,16 @@ function App() {
       const typeMatch = !filters.workItemType || 
         workItem.fields['System.WorkItemType'] === filters.workItemType;
       
-      return areaPathMatch && typeMatch;
+      const tagMatch = filters.selectedTags.length === 0 || 
+        (workItem.fields['System.Tags'] && 
+         filters.selectedTags.some(selectedTag => 
+           workItem.fields['System.Tags'].split(';').map(tag => tag.trim()).includes(selectedTag)
+         ));
+
+      const stateMatch = filters.selectedStates.length === 0 || 
+        filters.selectedStates.includes(workItem.fields['System.State']);
+      
+      return areaPathMatch && typeMatch && tagMatch && stateMatch;
     });
   };
 
@@ -156,12 +254,37 @@ function App() {
     }));
   };
 
+  // Handle state filter toggle
+  const handleStateFilterToggle = (state) => {
+    setFilters(prev => ({
+      ...prev,
+      selectedStates: prev.selectedStates.includes(state)
+        ? prev.selectedStates.filter(s => s !== state)
+        : [...prev.selectedStates, state]
+    }));
+  };
+
+  // Handle tag filter toggle
+  const handleTagFilterToggle = (tag) => {
+    setFilters(prev => ({
+      ...prev,
+      selectedTags: prev.selectedTags.includes(tag)
+        ? prev.selectedTags.filter(t => t !== tag)
+        : [...prev.selectedTags, tag]
+    }));
+  };
+
   // Clear all filters
   const clearFilters = () => {
     setFilters({
       areaPath: '',
-      workItemType: ''
+      workItemType: '',
+      tag: '',
+      selectedStates: [],
+      selectedTags: []
     });
+    setShowStateDropdown(false);
+    setShowTagDropdown(false);
   };
 
   const handleSubmit = async (e) => {
@@ -212,7 +335,68 @@ function App() {
           });
         }
 
+        // Add effort update if provided (for Product Backlog Items)
+        if (formData.effort && formData.workItemType === 'Product Backlog Item') {
+          updates.push({
+            op: 'replace',
+            path: '/fields/Microsoft.VSTS.Scheduling.Effort',
+            value: parseFloat(formData.effort) || 0
+          });
+        }
+
+        // Add business value update if provided (for all item types)
+        if (formData.businessValue) {
+          updates.push({
+            op: 'replace',
+            path: '/fields/Microsoft.VSTS.Common.BusinessValue',
+            value: parseInt(formData.businessValue) || 0
+          });
+        }
+
+        // Add acceptance criteria update if provided
+        if (formData.acceptanceCriteria) {
+          updates.push({
+            op: 'replace',
+            path: '/fields/Microsoft.VSTS.Common.AcceptanceCriteria',
+            value: formData.acceptanceCriteria
+          });
+        }
+
+        // Add discussion comment if provided
+        if (formData.discussionComment && formData.discussionComment.trim()) {
+          updates.push({
+            op: 'add',
+            path: '/fields/System.History',
+            value: formData.discussionComment
+          });
+        }
+
         await axios.patch(`${API_BASE_URL}/workitems/${editingItem.id}`, updates);
+        
+        // Handle parent relationship changes
+        const originalParentId = getParentId(workItemRelations[editingItem.id] || []);
+        const newParentId = formData.parentId ? parseInt(formData.parentId) : null;
+        
+        if (originalParentId !== newParentId) {
+          // Remove old parent relationship if exists
+          if (originalParentId) {
+            const relationData = await fetchWorkItemRelations(editingItem.id);
+            if (relationData && relationData.relations) {
+              const parentRelationIndex = relationData.relations.findIndex(rel => 
+                rel.rel === 'System.LinkTypes.Hierarchy-Reverse' && 
+                extractWorkItemIdFromUrl(rel.url) === originalParentId
+              );
+              if (parentRelationIndex !== -1) {
+                await removeWorkItemRelation(editingItem.id, parentRelationIndex);
+              }
+            }
+          }
+          
+          // Add new parent relationship if specified
+          if (newParentId) {
+            await addWorkItemRelation(editingItem.id, newParentId, 'System.LinkTypes.Hierarchy-Reverse');
+          }
+        }
       } else {
         // Create new work item
         const fields = {
@@ -231,18 +415,76 @@ function App() {
           fields['System.Tags'] = formData.tags;
         }
 
-        await axios.post(`${API_BASE_URL}/workitems`, {
+        // Add effort if provided (for Product Backlog Items)
+        if (formData.effort && formData.workItemType === 'Product Backlog Item') {
+          fields['Microsoft.VSTS.Scheduling.Effort'] = parseFloat(formData.effort) || 0;
+        }
+
+        // Add business value if provided (for all item types)
+        if (formData.businessValue) {
+          fields['Microsoft.VSTS.Common.BusinessValue'] = parseInt(formData.businessValue) || 0;
+        }
+
+        // Add acceptance criteria if provided
+        if (formData.acceptanceCriteria) {
+          fields['Microsoft.VSTS.Common.AcceptanceCriteria'] = formData.acceptanceCriteria;
+        }
+
+        // Add initial discussion comment if provided
+        if (formData.discussionComment && formData.discussionComment.trim()) {
+          fields['System.History'] = formData.discussionComment;
+        }
+
+        const response = await axios.post(`${API_BASE_URL}/workitems`, {
           workItemType: formData.workItemType,
           fields: fields
         });
+        
+        // Add parent relationship if specified
+        if (formData.parentId && response.data && response.data.id) {
+          const newWorkItemId = response.data.id;
+          await addWorkItemRelation(newWorkItemId, parseInt(formData.parentId), 'System.LinkTypes.Hierarchy-Reverse');
+        }
       }
 
       setShowModal(false);
       setEditingItem(null);
+      // Clear the discussion comment after submission since it's been added to history
+      setFormData(prev => ({...prev, discussionComment: ''}));
       resetForm();
       fetchWorkItems();
     } catch (err) {
       setError('Failed to save work item: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  // Get valid states for a work item type
+  const getValidStates = (workItemType) => {
+    switch (workItemType) {
+      case 'Epic':
+      case 'Feature':
+        return [
+          { value: 'New', label: 'New' },
+          { value: 'In Progress', label: 'In Progress' },
+          { value: 'Done', label: 'Done' },
+          { value: 'Removed', label: 'Removed' }
+        ];
+      case 'Product Backlog Item':
+        return [
+          { value: 'New', label: 'New' },
+          { value: 'Approved', label: 'Approved' },
+          { value: 'Committed', label: 'Committed' },
+          { value: 'Done', label: 'Done' },
+          { value: 'Removed', label: 'Removed' }
+        ];
+      default:
+        // Default states for other work item types (Task, Bug, etc.)
+        return [
+          { value: 'New', label: 'New' },
+          { value: 'In Progress', label: 'In Progress' },
+          { value: 'Resolved', label: 'Resolved' },
+          { value: 'Closed', label: 'Closed' }
+        ];
     }
   };
 
@@ -253,7 +495,13 @@ function App() {
       state: 'New',
       workItemType: '',
       areaPath: '',
-      tags: ''
+      tags: '',
+      effort: '',
+      businessValue: '',
+      acceptanceCriteria: '',
+      discussionComment: '',
+      parentId: '',
+      childIds: []
     });
   };
 
@@ -263,14 +511,25 @@ function App() {
     setShowModal(true);
   };
 
-  const openEditModal = (workItem) => {
+  const openEditModal = async (workItem) => {
+    // Load work item relationships
+    const relationData = await fetchWorkItemRelations(workItem.id);
+    const parentId = relationData ? getParentId(relationData.relations) : null;
+    const childIds = relationData ? getChildIds(relationData.relations) : [];
+
     setFormData({
       title: workItem.fields['System.Title'] || '',
       description: workItem.fields['System.Description'] || '',
       state: workItem.fields['System.State'] || 'New',
       workItemType: workItem.fields['System.WorkItemType'] || '',
       areaPath: workItem.fields['System.AreaPath'] || '',
-      tags: workItem.fields['System.Tags'] || ''
+      tags: workItem.fields['System.Tags'] || '',
+      effort: workItem.fields['Microsoft.VSTS.Scheduling.Effort'] || '',
+      businessValue: workItem.fields['Microsoft.VSTS.Common.BusinessValue'] || '',
+      acceptanceCriteria: workItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || '',
+      discussionComment: '', // Always start empty for new comments
+      parentId: parentId || '',
+      childIds: childIds || []
     });
     setEditingItem(workItem);
     setShowModal(true);
@@ -295,6 +554,40 @@ function App() {
   const truncateText = (text, maxLength = 100) => {
     if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+  };
+
+  // Helper function to extract work item ID from URL
+  const extractWorkItemIdFromUrl = (url) => {
+    const match = url.match(/workitems\/(\d+)$/);
+    return match ? parseInt(match[1]) : null;
+  };
+
+  // Helper function to get parent work item ID from relations
+  const getParentId = (relations) => {
+    if (!relations || !Array.isArray(relations)) return null;
+    const parentRelation = relations.find(rel => rel.rel === 'System.LinkTypes.Hierarchy-Reverse');
+    return parentRelation ? extractWorkItemIdFromUrl(parentRelation.url) : null;
+  };
+
+  // Helper function to get child work item IDs from relations
+  const getChildIds = (relations) => {
+    if (!relations || !Array.isArray(relations)) return [];
+    const childRelations = relations.filter(rel => rel.rel === 'System.LinkTypes.Hierarchy-Forward');
+    return childRelations.map(rel => extractWorkItemIdFromUrl(rel.url)).filter(id => id !== null);
+  };
+
+  // Helper function to get work item title by ID
+  const getWorkItemTitle = (id) => {
+    const workItem = availableWorkItems.find(item => item.id === parseInt(id));
+    return workItem ? `#${workItem.id} - ${workItem.fields['System.Title']}` : `#${id}`;
+  };
+
+  // Handle clicking on a parent work item to navigate to it
+  const handleParentClick = (parentId) => {
+    const parentItem = workItems.find(wi => wi.id.toString() === parentId.toString());
+    if (parentItem) {
+      openEditModal(parentItem);
+    }
   };
 
   if (!isAuthenticated) {
@@ -376,10 +669,82 @@ function App() {
             </div>
 
             <div className="filter-group">
+              <label>Filter by Tag:</label>
+              <div className="custom-dropdown tag-dropdown">
+                <button
+                  type="button"
+                  className="dropdown-button"
+                  onClick={() => setShowTagDropdown(!showTagDropdown)}
+                >
+                  {filters.selectedTags.length === 0 
+                    ? 'Select Tags...' 
+                    : `${filters.selectedTags.length} tag${filters.selectedTags.length !== 1 ? 's' : ''} selected`
+                  }
+                  <span className={`dropdown-arrow ${showTagDropdown ? 'open' : ''}`}>▼</span>
+                </button>
+                {showTagDropdown && (
+                  <div className="dropdown-content">
+                    {getUniqueTags().map((tag) => (
+                      <label key={tag} className="dropdown-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={filters.selectedTags.includes(tag)}
+                          onChange={() => handleTagFilterToggle(tag)}
+                        />
+                        <span className="tag-badge">
+                          {tag}
+                        </span>
+                      </label>
+                    ))}
+                    {getUniqueTags().length === 0 && (
+                      <div className="dropdown-empty">No tags available</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="filter-group">
+              <label>Filter by State:</label>
+              <div className="custom-dropdown state-dropdown">
+                <button
+                  type="button"
+                  className="dropdown-button"
+                  onClick={() => setShowStateDropdown(!showStateDropdown)}
+                >
+                  {filters.selectedStates.length === 0 
+                    ? 'Select States...' 
+                    : `${filters.selectedStates.length} state${filters.selectedStates.length !== 1 ? 's' : ''} selected`
+                  }
+                  <span className={`dropdown-arrow ${showStateDropdown ? 'open' : ''}`}>▼</span>
+                </button>
+                {showStateDropdown && (
+                  <div className="dropdown-content">
+                    {getUniqueStates().map((state) => (
+                      <label key={state} className="dropdown-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={filters.selectedStates.includes(state)}
+                          onChange={() => handleStateFilterToggle(state)}
+                        />
+                        <span className={`state-badge state-${state.toLowerCase().replace(/\s+/g, '-')}`}>
+                          {state}
+                        </span>
+                      </label>
+                    ))}
+                    {getUniqueStates().length === 0 && (
+                      <div className="dropdown-empty">No states available</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="filter-group">
               <button 
                 className="btn btn-secondary clear-filters-btn"
                 onClick={clearFilters}
-                disabled={!filters.areaPath && !filters.workItemType}
+                disabled={!filters.areaPath && !filters.workItemType && !filters.tag && filters.selectedStates.length === 0 && filters.selectedTags.length === 0}
               >
                 Clear Filters
               </button>
@@ -426,6 +791,58 @@ function App() {
                 <div className="work-item-tags">
                   🏷️ {workItem.fields['System.Tags']}
                 </div>
+              )}
+
+              {workItem.fields['Microsoft.VSTS.Scheduling.Effort'] && workItem.fields['System.WorkItemType'] === 'Product Backlog Item' && (
+                <div className="work-item-effort">
+                  Effort: {workItem.fields['Microsoft.VSTS.Scheduling.Effort']}
+                </div>
+              )}
+
+              {workItem.fields['Microsoft.VSTS.Common.BusinessValue'] && (
+                <div className="work-item-business-value">
+                  Business Value: {workItem.fields['Microsoft.VSTS.Common.BusinessValue']}
+                </div>
+              )}
+
+              {workItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] && (
+                <div className="work-item-acceptance-criteria">
+                  <strong>Acceptance Criteria:</strong>
+                  <div className="acceptance-criteria-content">
+                    {truncateText(workItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria'], 150)}
+                  </div>
+                </div>
+              )}
+
+              {workItem.fields['System.History'] && (
+                <div className="work-item-discussion">
+                  <strong>Latest Discussion:</strong>
+                  <div className="discussion-content">
+                    {truncateText(workItem.fields['System.History'], 100)}
+                  </div>
+                </div>
+              )}
+
+              {/* Parent/Child Relationships */}
+              {workItemRelations[workItem.id] && (
+                <>
+                  {getParentId(workItemRelations[workItem.id]) && (
+                    <div className="work-item-parent">
+                      👆 Parent: 
+                      <button 
+                        className="btn-link parent-link"
+                        onClick={() => handleParentClick(getParentId(workItemRelations[workItem.id]))}
+                      >
+                        {getWorkItemTitle(getParentId(workItemRelations[workItem.id]))}
+                      </button>
+                    </div>
+                  )}
+                  {getChildIds(workItemRelations[workItem.id]).length > 0 && (
+                    <div className="work-item-children">
+                      👇 Children: {getChildIds(workItemRelations[workItem.id]).map(childId => getWorkItemTitle(childId)).join(', ')}
+                    </div>
+                  )}
+                </>
               )}
               
               <div className="work-item-actions">
@@ -485,14 +902,22 @@ function App() {
                     id="workItemType"
                     className="form-control"
                     value={formData.workItemType}
-                    onChange={(e) => setFormData({...formData, workItemType: e.target.value})}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      const validStates = getValidStates(newType);
+                      setFormData({
+                        ...formData, 
+                        workItemType: newType,
+                        state: validStates.length > 0 ? validStates[0].value : 'New'
+                      });
+                    }}
                     required={!editingItem}
                     disabled={editingItem}
                   >
                     <option value="">Select type...</option>
                     <option value="Epic">Epic</option>
                     <option value="Feature">Feature</option>
-                    <option value="Task">Task</option>
+                    <option value="Product Backlog Item">Product Backlog Item</option>
                     <option value="Bug">Bug</option>
                     <option value="Issue">Issue</option>
                     <option value="Test Case">Test Case</option>
@@ -537,10 +962,11 @@ function App() {
                     value={formData.state}
                     onChange={(e) => setFormData({...formData, state: e.target.value})}
                   >
-                    <option value="New">New</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Resolved">Resolved</option>
-                    <option value="Closed">Closed</option>
+                    {getValidStates(formData.workItemType).map((state) => (
+                      <option key={state.value} value={state.value}>
+                        {state.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -574,6 +1000,217 @@ function App() {
                   <small className="form-text">
                     Enter tags separated by semicolons. Example: frontend; urgent; bug
                   </small>
+                </div>
+
+                {formData.workItemType === 'Product Backlog Item' && (
+                  <div className="form-group">
+                    <label htmlFor="effort">Effort</label>
+                    <input
+                      type="number"
+                      id="effort"
+                      className="form-control"
+                      value={formData.effort}
+                      onChange={(e) => setFormData({...formData, effort: e.target.value})}
+                      placeholder="Story points or hours"
+                      min="0"
+                      step="0.5"
+                    />
+                    <small className="form-text">
+                      Effort estimation in story points or hours for this Product Backlog Item
+                    </small>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label htmlFor="businessValue">Business Value</label>
+                  <input
+                    type="number"
+                    id="businessValue"
+                    className="form-control"
+                    value={formData.businessValue}
+                    onChange={(e) => setFormData({...formData, businessValue: e.target.value})}
+                    placeholder="Business value score"
+                    min="0"
+                  />
+                  <small className="form-text">
+                    Numeric score representing the business value of this work item
+                  </small>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="acceptanceCriteria">Acceptance Criteria</label>
+                  <textarea
+                    id="acceptanceCriteria"
+                    className="form-control"
+                    rows="4"
+                    value={formData.acceptanceCriteria}
+                    onChange={(e) => setFormData({...formData, acceptanceCriteria: e.target.value})}
+                    placeholder="Define the acceptance criteria for this work item..."
+                  />
+                  <small className="form-text">
+                    Define clear, testable criteria that must be met for this work item to be considered complete
+                  </small>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="discussionComment">
+                    {editingItem ? 'Add Discussion Comment' : 'Initial Discussion Comment'}
+                  </label>
+                  <textarea
+                    id="discussionComment"
+                    className="form-control"
+                    rows="3"
+                    value={formData.discussionComment}
+                    onChange={(e) => setFormData({...formData, discussionComment: e.target.value})}
+                    placeholder={editingItem ? "Add a comment to the discussion..." : "Add an initial comment (optional)..."}
+                  />
+                  <small className="form-text">
+                    {editingItem 
+                      ? 'Add a comment that will appear in the work item discussion history'
+                      : 'Optional: Add an initial comment to start the discussion'
+                    }
+                  </small>
+                </div>
+
+                {/* Parent/Child Relationships */}
+                <div className="relationships-section">
+                  <h4>Work Item Relationships</h4>
+                  
+                  {/* Parent Relationship */}
+                  <div className="form-group">
+                    <label htmlFor="parentId">Parent Work Item</label>
+                    {editingItem && formData.parentId && (
+                      <div className="current-relationship">
+                        <strong>Current Parent:</strong> #{formData.parentId} - {getWorkItemTitle(parseInt(formData.parentId))}
+                      </div>
+                    )}
+                    <select
+                      id="parentId"
+                      className="form-control"
+                      value={formData.parentId}
+                      onChange={(e) => setFormData({...formData, parentId: e.target.value})}
+                    >
+                      <option value="">No parent (root level)</option>
+                      {availableWorkItems
+                        .filter(item => 
+                          item.id !== editingItem?.id && // Don't allow self as parent
+                          !formData.childIds.includes(item.id.toString()) // Don't allow children as parents
+                        )
+                        .map(item => (
+                          <option key={item.id} value={item.id}>
+                            #{item.id} - {item.fields['System.Title']} ({item.fields['System.WorkItemType']})
+                          </option>
+                        ))
+                      }
+                    </select>
+                    <small className="form-text">
+                      Select a parent work item to create a hierarchical relationship
+                    </small>
+                  </div>
+
+                  {/* Child Relationships */}
+                  <div className="form-group">
+                    <label>Child Work Items</label>
+                    
+                    {editingItem && formData.childIds.length > 0 && (
+                      <div className="current-children">
+                        <strong>Current Children:</strong>
+                        {formData.childIds.map(childId => (
+                          <div key={childId} className="child-item">
+                            <span>#{childId} - {getWorkItemTitle(parseInt(childId))}</span>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={async () => {
+                                try {
+                                  // Find relation index to remove
+                                  const relationData = await fetchWorkItemRelations(editingItem.id);
+                                  if (relationData && relationData.relations) {
+                                    const childRelationIndex = relationData.relations.findIndex(rel => 
+                                      rel.rel === 'System.LinkTypes.Hierarchy-Forward' && 
+                                      extractWorkItemIdFromUrl(rel.url) === parseInt(childId)
+                                    );
+                                    if (childRelationIndex !== -1) {
+                                      await removeWorkItemRelation(editingItem.id, childRelationIndex);
+                                      // Update form data
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        childIds: prev.childIds.filter(id => id !== childId)
+                                      }));
+                                      // Refresh relationships
+                                      const updatedRelations = await fetchWorkItemRelations(editingItem.id);
+                                      setWorkItemRelations(prev => ({
+                                        ...prev,
+                                        [editingItem.id]: updatedRelations?.relations || []
+                                      }));
+                                    }
+                                  }
+                                } catch (err) {
+                                  setError(err.message);
+                                }
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Add Child Selector */}
+                    <div className="add-child-section">
+                      <label htmlFor="addChildId">Add Child Work Item</label>
+                      <select
+                        id="addChildId"
+                        className="form-control"
+                        value=""
+                        onChange={async (e) => {
+                          if (e.target.value && editingItem) {
+                            try {
+                              const childId = parseInt(e.target.value);
+                              // Add the relationship
+                              await addWorkItemRelation(editingItem.id, childId, 'System.LinkTypes.Hierarchy-Forward');
+                              
+                              // Update form data
+                              setFormData(prev => ({
+                                ...prev,
+                                childIds: [...prev.childIds, e.target.value]
+                              }));
+                              
+                              // Refresh relationships
+                              const updatedRelations = await fetchWorkItemRelations(editingItem.id);
+                              setWorkItemRelations(prev => ({
+                                ...prev,
+                                [editingItem.id]: updatedRelations?.relations || []
+                              }));
+                              
+                              // Reset selector
+                              e.target.value = "";
+                            } catch (err) {
+                              setError(err.message);
+                            }
+                          }
+                        }}
+                      >
+                        <option value="">Select a work item to add as child</option>
+                        {availableWorkItems
+                          .filter(item => 
+                            item.id !== editingItem?.id && // Don't allow self as child
+                            parseInt(formData.parentId) !== item.id && // Don't allow parent as child
+                            !formData.childIds.includes(item.id.toString()) // Don't allow already linked children
+                          )
+                          .map(item => (
+                            <option key={item.id} value={item.id}>
+                              #{item.id} - {item.fields['System.Title']} ({item.fields['System.WorkItemType']})
+                            </option>
+                          ))
+                        }
+                      </select>
+                      <small className="form-text">
+                        Select work items to add as children of this item
+                      </small>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="form-actions">
