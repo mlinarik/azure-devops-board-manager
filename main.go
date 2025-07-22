@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,18 @@ import (
 type WorkItem struct {
 	ID     int                    `json:"id"`
 	Fields map[string]interface{} `json:"fields"`
-	URL    string                 `json:"url"`
+}
+
+type AreaPath struct {
+	Name     string     `json:"name"`
+	Path     string     `json:"path"`
+	Children []AreaPath `json:"children,omitempty"`
+}
+
+type AreaPathResponse struct {
+	Name     string     `json:"name"`
+	Path     string     `json:"path"`
+	Children []AreaPathResponse `json:"children,omitempty"`
 }
 
 type WorkItemsResponse struct {
@@ -55,20 +67,26 @@ func (client *AzureDevOpsClient) makeRequest(method, url string, body io.Reader)
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Basic "+client.PAT)
-	req.Header.Set("Content-Type", "application/json-patch+json")
+	// Properly encode PAT for Basic authentication
+	auth := base64.StdEncoding.EncodeToString([]byte(":" + client.PAT))
+	req.Header.Set("Authorization", "Basic "+auth)
+	
+	// Set appropriate content type based on request
+	if method == "POST" && strings.Contains(url, "wiql") {
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req.Header.Set("Content-Type", "application/json-patch+json")
+	}
 
 	httpClient := &http.Client{}
 	return httpClient.Do(req)
 }
 
 func (client *AzureDevOpsClient) GetWorkItems() ([]WorkItem, error) {
-	url := fmt.Sprintf("%s/wit/workitems?$expand=all&api-version=6.0", client.BaseURL)
-	
 	// First get work item IDs using a WIQL query
 	wiqlURL := fmt.Sprintf("%s/wit/wiql?api-version=6.0", client.BaseURL)
 	wiqlQuery := map[string]string{
-		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Task') ORDER BY [System.Id]", client.Project),
+		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Task', 'Epic', 'Feature') ORDER BY [System.Id]", client.Project),
 	}
 	
 	queryBody, _ := json.Marshal(wiqlQuery)
@@ -178,6 +196,66 @@ func (client *AzureDevOpsClient) CreateWorkItem(workItemType string, fields map[
 	return &workItem, nil
 }
 
+func (client *AzureDevOpsClient) GetAreaPaths() ([]AreaPathResponse, error) {
+	url := fmt.Sprintf("%s/wit/classificationnodes/Areas?api-version=6.0&$depth=10", client.BaseURL)
+	
+	resp, err := client.makeRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get area paths: %s", resp.Status)
+	}
+
+	var response struct {
+		Name     string `json:"name"`
+		Path     string `json:"path"`
+		Children []struct {
+			Name     string `json:"name"`
+			Path     string `json:"path"`
+			Children []struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
+			} `json:"children,omitempty"`
+		} `json:"children,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, err
+	}
+
+	// Convert to flattened list of area paths
+	var areaPaths []AreaPathResponse
+	
+	// Add root area path
+	areaPaths = append(areaPaths, AreaPathResponse{
+		Name: response.Name,
+		Path: response.Name,
+	})
+
+	// Add child area paths
+	for _, child := range response.Children {
+		childPath := response.Name + "\\" + child.Name
+		areaPaths = append(areaPaths, AreaPathResponse{
+			Name: child.Name,
+			Path: childPath,
+		})
+
+		// Add grandchildren if any
+		for _, grandchild := range child.Children {
+			grandchildPath := childPath + "\\" + grandchild.Name
+			areaPaths = append(areaPaths, AreaPathResponse{
+				Name: grandchild.Name,
+				Path: grandchildPath,
+			})
+		}
+	}
+
+	return areaPaths, nil
+}
+
 func main() {
 	// Load environment variables
 	err := godotenv.Load()
@@ -215,6 +293,15 @@ func main() {
 				return
 			}
 			c.JSON(http.StatusOK, workItems)
+		})
+
+		api.GET("/areapaths", func(c *gin.Context) {
+			areaPaths, err := client.GetAreaPaths()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, areaPaths)
 		})
 
 		api.PATCH("/workitems/:id", func(c *gin.Context) {

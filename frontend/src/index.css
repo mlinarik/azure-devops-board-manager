@@ -31,6 +31,81 @@ code {
   text-align: center;
 }
 
+/* Filter Controls */
+.filters {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.filters-row {
+  display: flex;
+  gap: 1rem;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+
+.filter-group label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #323130;
+  margin-bottom: 0.25rem;
+}
+
+.filter-control {
+  padding: 0.5rem;
+  border: 1px solid #d2d0ce;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  background: white;
+}
+
+.filter-control:focus {
+  outline: none;
+  border-color: #0078d4;
+  box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+}
+
+.clear-filters-btn {
+  padding: 0.5rem 1rem;
+  margin-top: 1.5rem;
+  font-size: 0.875rem;
+}
+
+.clear-filters-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.filter-results {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: #605e5c;
+  font-style: italic;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: #0078d4;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+}
+
+.btn-link:hover {
+  color: #106ebe;
+}
+
 .work-items-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -100,7 +175,7 @@ code {
   color: #323130;
 }
 
-.state-active {
+.state-in-progress {
   background-color: #fff4ce;
   color: #8a8886;
 }
@@ -113,6 +188,28 @@ code {
 .state-closed {
   background-color: #f3f2f1;
   color: #605e5c;
+}
+
+.work-item-area-path {
+  color: #8a8886;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+  font-style: italic;
+}
+
+.work-item-area-path::before {
+  content: "📁 ";
+}
+
+.work-item-tags {
+  color: #0078d4;
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.work-item-tags::before {
+  content: "🏷️ ";
 }
 
 .work-item-description {
@@ -216,6 +313,13 @@ code {
   margin-bottom: 0.5rem;
   font-weight: 600;
   color: #323130;
+}
+
+.form-text {
+  font-size: 0.875rem;
+  color: #6c757d;
+  margin-top: 0.25rem;
+  display: block;
 }
 
 .form-control {
