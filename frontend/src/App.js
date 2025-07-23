@@ -34,6 +34,11 @@ function App() {
     tags: '',
     effort: '',
     businessValue: '',
+    govType: '',
+    impact: '',
+    costSavings: '',
+    effortCategory: '',
+    complexity: '',
     acceptanceCriteria: '',
     discussionComment: '',
     parentId: '',
@@ -75,6 +80,20 @@ function App() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showStateDropdown, showTagDropdown]);
+
+  // Auto-calculate business value when categories change
+  useEffect(() => {
+    if (formData.govType && formData.impact && formData.costSavings && formData.effortCategory && formData.complexity) {
+      const calculatedValue = calculateBusinessValue(
+        formData.govType, 
+        formData.impact, 
+        formData.costSavings, 
+        formData.effortCategory, 
+        formData.complexity
+      );
+      setFormData(prev => ({ ...prev, businessValue: calculatedValue }));
+    }
+  }, [formData.govType, formData.impact, formData.costSavings, formData.effortCategory, formData.complexity]);
 
   // Setup axios interceptor for authentication
   const setupAxiosInterceptor = (token) => {
@@ -344,12 +363,62 @@ function App() {
           });
         }
 
-        // Add business value update if provided (for all item types)
-        if (formData.businessValue) {
+        // Calculate and add business value based on categories
+        const calculatedBusinessValue = calculateBusinessValue(
+          formData.govType, 
+          formData.impact, 
+          formData.costSavings, 
+          formData.effortCategory, 
+          formData.complexity
+        );
+        
+        if (calculatedBusinessValue > 0) {
           updates.push({
             op: 'replace',
             path: '/fields/Microsoft.VSTS.Common.BusinessValue',
-            value: parseInt(formData.businessValue) || 0
+            value: calculatedBusinessValue
+          });
+        }
+
+        // Store business value categories as tags (append to existing tags)
+        if (formData.govType || formData.impact || formData.costSavings || formData.effortCategory || formData.complexity) {
+          const categoryTags = [];
+          if (formData.govType) {
+            const govTypeLabels = { '1': 'RTB', '2': 'BIT', '3': 'Discretionary', '4': 'Security', '5': 'Compliance' };
+            categoryTags.push(`Gov:${govTypeLabels[formData.govType]}`);
+          }
+          if (formData.impact) {
+            const impactLabels = { '1': 'High-Impact', '2': 'Medium-Impact', '3': 'Low-Impact' };
+            categoryTags.push(`Impact:${impactLabels[formData.impact]}`);
+          }
+          if (formData.costSavings) {
+            const costLabels = { '1': '>1M', '2': '=1M', '3': '<1M' };
+            categoryTags.push(`Cost:${costLabels[formData.costSavings]}`);
+          }
+          if (formData.effortCategory) {
+            const effortLabels = { '1': 'Low-Effort', '2': 'Medium-Effort', '3': 'High-Effort' };
+            categoryTags.push(`Effort:${effortLabels[formData.effortCategory]}`);
+          }
+          if (formData.complexity) {
+            const complexityLabels = { '1': 'Low-Complexity', '2': 'Medium-Complexity', '3': 'High-Complexity' };
+            categoryTags.push(`Complexity:${complexityLabels[formData.complexity]}`);
+          }
+          
+          // Combine with existing tags (filter out old business value category tags)
+          const existingTags = formData.tags ? formData.tags.split(';').map(tag => tag.trim()).filter(tag => tag) : [];
+          const nonCategoryTags = existingTags.filter(tag => 
+            !tag.startsWith('Gov:') && 
+            !tag.startsWith('Impact:') && 
+            !tag.startsWith('Cost:') && 
+            !tag.startsWith('Effort:') && 
+            !tag.startsWith('Complexity:')
+          );
+          const allTags = [...nonCategoryTags, ...categoryTags].join('; ');
+          
+          updates.push({
+            op: 'replace',
+            path: '/fields/System.Tags',
+            value: allTags
           });
         }
 
@@ -420,9 +489,55 @@ function App() {
           fields['Microsoft.VSTS.Scheduling.Effort'] = parseFloat(formData.effort) || 0;
         }
 
-        // Add business value if provided (for all item types)
-        if (formData.businessValue) {
-          fields['Microsoft.VSTS.Common.BusinessValue'] = parseInt(formData.businessValue) || 0;
+        // Calculate and add business value based on categories
+        const calculatedBusinessValue = calculateBusinessValue(
+          formData.govType, 
+          formData.impact, 
+          formData.costSavings, 
+          formData.effortCategory, 
+          formData.complexity
+        );
+        
+        if (calculatedBusinessValue > 0) {
+          fields['Microsoft.VSTS.Common.BusinessValue'] = calculatedBusinessValue;
+        }
+
+        // Store business value categories as tags (combine with existing tags)
+        if (formData.govType || formData.impact || formData.costSavings || formData.effortCategory || formData.complexity) {
+          const categoryTags = [];
+          if (formData.govType) {
+            const govTypeLabels = { '1': 'RTB', '2': 'BIT', '3': 'Discretionary', '4': 'Security', '5': 'Compliance' };
+            categoryTags.push(`Gov:${govTypeLabels[formData.govType]}`);
+          }
+          if (formData.impact) {
+            const impactLabels = { '1': 'High-Impact', '2': 'Medium-Impact', '3': 'Low-Impact' };
+            categoryTags.push(`Impact:${impactLabels[formData.impact]}`);
+          }
+          if (formData.costSavings) {
+            const costLabels = { '1': '>1M', '2': '=1M', '3': '<1M' };
+            categoryTags.push(`Cost:${costLabels[formData.costSavings]}`);
+          }
+          if (formData.effortCategory) {
+            const effortLabels = { '1': 'Low-Effort', '2': 'Medium-Effort', '3': 'High-Effort' };
+            categoryTags.push(`Effort:${effortLabels[formData.effortCategory]}`);
+          }
+          if (formData.complexity) {
+            const complexityLabels = { '1': 'Low-Complexity', '2': 'Medium-Complexity', '3': 'High-Complexity' };
+            categoryTags.push(`Complexity:${complexityLabels[formData.complexity]}`);
+          }
+          
+          // Combine with existing tags (filter out old business value category tags)
+          const existingTags = formData.tags ? formData.tags.split(';').map(tag => tag.trim()).filter(tag => tag) : [];
+          const nonCategoryTags = existingTags.filter(tag => 
+            !tag.startsWith('Gov:') && 
+            !tag.startsWith('Impact:') && 
+            !tag.startsWith('Cost:') && 
+            !tag.startsWith('Effort:') && 
+            !tag.startsWith('Complexity:')
+          );
+          const allTags = [...nonCategoryTags, ...categoryTags].join('; ');
+          
+          fields['System.Tags'] = allTags;
         }
 
         // Add acceptance criteria if provided
@@ -498,11 +613,96 @@ function App() {
       tags: '',
       effort: '',
       businessValue: '',
+      govType: '',
+      impact: '',
+      costSavings: '',
+      effortCategory: '',
+      complexity: '',
       acceptanceCriteria: '',
       discussionComment: '',
       parentId: '',
       childIds: []
     });
+  };
+
+  // Calculate business value score based on weighted categories
+  const calculateBusinessValue = (govType, impact, costSavings, effortCategory, complexity) => {
+    if (!govType || !impact || !costSavings || !effortCategory || !complexity) {
+      return 0; // Return 0 if any category is missing
+    }
+
+    // Convert string values to numbers (lower is better except for effort)
+    const govTypeScore = parseInt(govType);
+    const impactScore = parseInt(impact);
+    const costSavingsScore = parseInt(costSavings);
+    const effortScore = 4 - parseInt(effortCategory); // Reverse for effort (higher effort is better)
+    const complexityScore = parseInt(complexity);
+
+    // Apply weights and calculate weighted score
+    const weightedScore = (
+      (govTypeScore * 0.20) +     // 20% weight
+      (impactScore * 0.30) +      // 30% weight  
+      (costSavingsScore * 0.30) + // 30% weight
+      (effortScore * 0.10) +      // 10% weight (reversed)
+      (complexityScore * 0.10)    // 10% weight
+    );
+
+    // Convert to a score out of 100 (lower weighted score = higher business value)
+    // Scale: 1.0 = 100, 5.0 = 0
+    const businessValueScore = Math.max(0, Math.round(100 - ((weightedScore - 1) / 4) * 100));
+    
+    return businessValueScore;
+  };
+
+  // Helper function to parse business value categories from tags
+  const parseCategoriesFromTags = (tags) => {
+    if (!tags) return { govType: '', impact: '', costSavings: '', effortCategory: '', complexity: '' };
+    
+    const categories = { govType: '', impact: '', costSavings: '', effortCategory: '', complexity: '' };
+    
+    const tagList = tags.split(';').map(tag => tag.trim());
+    
+    // Parse government type
+    const govTag = tagList.find(tag => tag.startsWith('Gov:'));
+    if (govTag) {
+      const govValue = govTag.split(':')[1];
+      const govMapping = { 'RTB': '1', 'BIT': '2', 'Discretionary': '3', 'Security': '4', 'Compliance': '5' };
+      categories.govType = govMapping[govValue] || '';
+    }
+    
+    // Parse impact
+    const impactTag = tagList.find(tag => tag.startsWith('Impact:'));
+    if (impactTag) {
+      const impactValue = impactTag.split(':')[1];
+      const impactMapping = { 'High-Impact': '1', 'Medium-Impact': '2', 'Low-Impact': '3' };
+      categories.impact = impactMapping[impactValue] || '';
+    }
+    
+    // Parse cost savings
+    const costTag = tagList.find(tag => tag.startsWith('Cost:'));
+    if (costTag) {
+      const costValue = costTag.split(':')[1];
+      const costMapping = { '>1M': '1', '=1M': '2', '<1M': '3' };
+      categories.costSavings = costMapping[costValue] || '';
+    }
+    
+    // Parse effort
+    const effortTag = tagList.find(tag => tag.startsWith('Effort:'));
+    if (effortTag) {
+      const effortValue = effortTag.split(':')[1];
+      const effortMapping = { 'Low-Effort': '1', 'Medium-Effort': '2', 'High-Effort': '3' };
+      categories.effortCategory = effortMapping[effortValue] || '';
+    }
+    
+    // Parse complexity
+    const complexityTag = tagList.find(tag => tag.startsWith('Complexity:'));
+    if (complexityTag) {
+      const complexityValue = complexityTag.split(':')[1];
+      const complexityMapping = { 'Low-Complexity': '1', 'Medium-Complexity': '2', 'High-Complexity': '3' };
+      categories.complexity = complexityMapping[complexityValue] || '';
+    }
+    
+    return categories;
   };
 
   const openCreateModal = () => {
@@ -517,15 +717,34 @@ function App() {
     const parentId = relationData ? getParentId(relationData.relations) : null;
     const childIds = relationData ? getChildIds(relationData.relations) : [];
 
+    // Parse business value categories from tags
+    const categories = parseCategoriesFromTags(workItem.fields['System.Tags']);
+
+    // Filter out business value category tags from the tags field to avoid conflicts
+    const existingTags = workItem.fields['System.Tags'] ? workItem.fields['System.Tags'].split(';').map(tag => tag.trim()).filter(tag => tag) : [];
+    const nonCategoryTags = existingTags.filter(tag => 
+      !tag.startsWith('Gov:') && 
+      !tag.startsWith('Impact:') && 
+      !tag.startsWith('Cost:') && 
+      !tag.startsWith('Effort:') && 
+      !tag.startsWith('Complexity:')
+    );
+    const cleanTags = nonCategoryTags.join('; ');
+
     setFormData({
       title: workItem.fields['System.Title'] || '',
       description: workItem.fields['System.Description'] || '',
       state: workItem.fields['System.State'] || 'New',
       workItemType: workItem.fields['System.WorkItemType'] || '',
       areaPath: workItem.fields['System.AreaPath'] || '',
-      tags: workItem.fields['System.Tags'] || '',
+      tags: cleanTags,
       effort: workItem.fields['Microsoft.VSTS.Scheduling.Effort'] || '',
       businessValue: workItem.fields['Microsoft.VSTS.Common.BusinessValue'] || '',
+      govType: categories.govType,
+      impact: categories.impact,
+      costSavings: categories.costSavings,
+      effortCategory: categories.effortCategory,
+      complexity: categories.complexity,
       acceptanceCriteria: workItem.fields['Microsoft.VSTS.Common.AcceptanceCriteria'] || '',
       discussionComment: '', // Always start empty for new comments
       parentId: parentId || '',
@@ -1021,20 +1240,117 @@ function App() {
                   </div>
                 )}
 
-                <div className="form-group">
-                  <label htmlFor="businessValue">Business Value</label>
-                  <input
-                    type="number"
-                    id="businessValue"
-                    className="form-control"
-                    value={formData.businessValue}
-                    onChange={(e) => setFormData({...formData, businessValue: e.target.value})}
-                    placeholder="Business value score"
-                    min="0"
-                  />
-                  <small className="form-text">
-                    Numeric score representing the business value of this work item
-                  </small>
+                {/* Business Value Categories */}
+                <div className="business-value-section">
+                  <h4>Business Value Assessment</h4>
+                  
+                  <div className="form-group">
+                    <label htmlFor="govType">Government Type (20% Weight)</label>
+                    <select
+                      id="govType"
+                      className="form-control"
+                      value={formData.govType}
+                      onChange={(e) => setFormData({...formData, govType: e.target.value})}
+                    >
+                      <option value="">Select Government Type</option>
+                      <option value="1">RTB</option>
+                      <option value="2">BIT</option>
+                      <option value="3">Discretionary</option>
+                      <option value="4">Security</option>
+                      <option value="5">Compliance</option>
+                    </select>
+                    <small className="form-text">
+                      Lower number indicates higher priority (RTB = highest priority)
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="impact">Impact (30% Weight)</label>
+                    <select
+                      id="impact"
+                      className="form-control"
+                      value={formData.impact}
+                      onChange={(e) => setFormData({...formData, impact: e.target.value})}
+                    >
+                      <option value="">Select Impact Level</option>
+                      <option value="1">High</option>
+                      <option value="2">Medium</option>
+                      <option value="3">Low</option>
+                    </select>
+                    <small className="form-text">
+                      Impact level of this work item on the organization
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="costSavings">Cost Savings (30% Weight)</label>
+                    <select
+                      id="costSavings"
+                      className="form-control"
+                      value={formData.costSavings}
+                      onChange={(e) => setFormData({...formData, costSavings: e.target.value})}
+                    >
+                      <option value="">Select Cost Savings</option>
+                      <option value="1">More than $1 Million</option>
+                      <option value="2">Equal to $1 Million</option>
+                      <option value="3">Less than $1 Million</option>
+                    </select>
+                    <small className="form-text">
+                      Expected cost savings from implementing this work item
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="effortCategory">Effort Required (10% Weight)</label>
+                    <select
+                      id="effortCategory"
+                      className="form-control"
+                      value={formData.effortCategory}
+                      onChange={(e) => setFormData({...formData, effortCategory: e.target.value})}
+                    >
+                      <option value="">Select Effort Level</option>
+                      <option value="1">Low</option>
+                      <option value="2">Medium</option>
+                      <option value="3">High</option>
+                    </select>
+                    <small className="form-text">
+                      Higher effort can increase business value (Low effort = quick wins)
+                    </small>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="complexity">Complexity (10% Weight)</label>
+                    <select
+                      id="complexity"
+                      className="form-control"
+                      value={formData.complexity}
+                      onChange={(e) => setFormData({...formData, complexity: e.target.value})}
+                    >
+                      <option value="">Select Complexity Level</option>
+                      <option value="1">Low</option>
+                      <option value="2">Medium</option>
+                      <option value="3">High</option>
+                    </select>
+                    <small className="form-text">
+                      Implementation complexity (lower complexity is preferred)
+                    </small>
+                  </div>
+
+                  {/* Calculated Business Value Display */}
+                  {formData.govType && formData.impact && formData.costSavings && formData.effortCategory && formData.complexity && (
+                    <div className="calculated-business-value">
+                      <strong>Calculated Business Value Score: {calculateBusinessValue(
+                        formData.govType, 
+                        formData.impact, 
+                        formData.costSavings, 
+                        formData.effortCategory, 
+                        formData.complexity
+                      )}/100</strong>
+                      <small className="form-text">
+                        Score automatically calculated based on weighted categories
+                      </small>
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
