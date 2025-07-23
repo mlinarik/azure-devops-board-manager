@@ -159,6 +159,94 @@ npm start
 4. Add tests if applicable
 5. Submit a pull request
 
+## Running with Podman (without podman-compose)
+
+If you prefer to use individual `podman` commands instead of `podman-compose`, follow these steps:
+
+### 1. Create Network
+```bash
+podman network create app-network
+```
+
+### 2. Set Environment Variables
+```bash
+export AZURE_DEVOPS_ORG="your-org"
+export AZURE_DEVOPS_PROJECT="your-project" 
+export AZURE_DEVOPS_PAT="your-personal-access-token"
+```
+
+### 3. Build and Run Backend Container
+```bash
+# Build the backend image
+podman build -t azure-devops-backend -f Dockerfile.backend .
+
+# Run the backend container
+podman run -d \
+  --name azure-devops-backend-dev \
+  --network app-network \
+  -p 8080:8080 \
+  -v .:/app:Z \
+  -v /app/tmp \
+  -e AZURE_DEVOPS_ORG="${AZURE_DEVOPS_ORG}" \
+  -e AZURE_DEVOPS_PROJECT="${AZURE_DEVOPS_PROJECT}" \
+  -e AZURE_DEVOPS_PAT="${AZURE_DEVOPS_PAT}" \
+  -e PORT=8080 \
+  --restart unless-stopped \
+  azure-devops-backend
+```
+
+### 4. Run Frontend Container
+```bash
+podman run -d \
+  --name azure-devops-frontend-dev \
+  --network app-network \
+  -p 3000:3000 \
+  -v ./frontend:/app:Z \
+  -w /app \
+  -e CHOKIDAR_USEPOLLING=true \
+  --restart unless-stopped \
+  docker.io/library/node:18-alpine \
+  sh -c "npm install && npm start"
+```
+
+### Management Commands
+
+**Start containers:**
+```bash
+podman start azure-devops-backend-dev azure-devops-frontend-dev
+```
+
+**Stop containers:**
+```bash
+podman stop azure-devops-backend-dev azure-devops-frontend-dev
+```
+
+**View logs:**
+```bash
+# Backend logs
+podman logs -f azure-devops-backend-dev
+
+# Frontend logs
+podman logs -f azure-devops-frontend-dev
+```
+
+**Clean up:**
+```bash
+# Stop and remove containers
+podman stop azure-devops-backend-dev azure-devops-frontend-dev
+podman rm azure-devops-backend-dev azure-devops-frontend-dev
+
+# Remove network and images
+podman network rm app-network
+podman rmi azure-devops-backend
+```
+
+### Notes
+- The `:Z` flag on volume mounts handles SELinux labeling for shared volumes
+- Start the backend container first as the frontend depends on it
+- Both containers include volume mounts for hot-reloading during development
+- The application will be available at http://localhost:3000 (frontend) and http://localhost:8080 (backend API)
+
 ## License
 
 This project is licensed under the MIT License." 
