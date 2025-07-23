@@ -830,3 +830,41 @@ code {
     order: -1;
   }
 }
+
+/* Business Value Assessment Styling */
+.business-value-section {
+  border: 1px solid #e1dfdd;
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 1rem 0;
+  background-color: #f8f9fa;
+}
+
+.business-value-section h4 {
+  margin: 0 0 1rem 0;
+  color: #323130;
+  font-size: 1.1rem;
+  border-bottom: 1px solid #e1dfdd;
+  padding-bottom: 0.5rem;
+}
+
+.calculated-business-value {
+  background-color: #e6f3ff;
+  border: 1px solid #b3d9ff;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.calculated-business-value strong {
+  display: block;
+  font-size: 1.2rem;
+  color: #0078d4;
+  margin-bottom: 0.5rem;
+}
+
+.calculated-business-value .form-text {
+  color: #605e5c;
+  font-style: italic;
+}
