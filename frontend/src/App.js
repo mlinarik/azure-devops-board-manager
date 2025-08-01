@@ -129,6 +129,44 @@ function App() {
     }
   }, [selectedAreaPath, areaPaths]);
 
+  // Get allowed area paths for work item form (parent + children + current if editing)
+  const getAllowedAreaPaths = () => {
+    if (!selectedAreaPath || areaPaths.length === 0) {
+      return [];
+    }
+    
+    // Find the parent area path object
+    const parentAreaPath = areaPaths.find(path => path.path === selectedAreaPath);
+    if (!parentAreaPath) {
+      return [];
+    }
+    
+    // Get child area paths
+    const children = [];
+    areaPaths.forEach(path => {
+      if (path.path.startsWith(selectedAreaPath + '\\') && path.path !== selectedAreaPath) {
+        // Only include direct children (one level down)
+        const relativePath = path.path.substring(selectedAreaPath.length + 1);
+        if (!relativePath.includes('\\')) {
+          children.push(path);
+        }
+      }
+    });
+    
+    // Start with parent + children
+    let allowedPaths = [parentAreaPath, ...children];
+    
+    // If editing and the current area path is not in the allowed list, add it
+    if (editingItem && formData.areaPath && !allowedPaths.find(path => path.path === formData.areaPath)) {
+      const currentAreaPath = areaPaths.find(path => path.path === formData.areaPath);
+      if (currentAreaPath) {
+        allowedPaths = [currentAreaPath, ...allowedPaths];
+      }
+    }
+    
+    return allowedPaths;
+  };
+
   // Setup axios interceptor for authentication
   const setupAxiosInterceptor = (token) => {
     // Add request interceptor to include auth token
@@ -653,7 +691,7 @@ function App() {
       description: '',
       state: 'New',
       workItemType: '',
-      areaPath: '',
+      areaPath: selectedAreaPath || '', // Default to parent area path
       tags: '',
       effort: '',
       businessValue: '',
@@ -1255,7 +1293,7 @@ function App() {
                     onChange={(e) => setFormData({...formData, areaPath: e.target.value})}
                   >
                     <option value="">Select area path...</option>
-                    {areaPaths.map((areaPath) => (
+                    {getAllowedAreaPaths().map((areaPath) => (
                       <option key={areaPath.path} value={areaPath.path}>
                         {areaPath.path}
                       </option>
