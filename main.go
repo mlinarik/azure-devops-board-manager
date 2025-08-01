@@ -27,6 +27,7 @@ type LoginRequest struct {
 	Organization string `json:"organization" binding:"required"`
 	Project      string `json:"project" binding:"required"`
 	PAT          string `json:"pat" binding:"required"`
+	AreaPath     string `json:"areaPath" binding:"required"`
 }
 
 type LoginResponse struct {
@@ -35,12 +36,13 @@ type LoginResponse struct {
 	Organization string `json:"organization,omitempty"`
 	Project      string `json:"project,omitempty"`
 	Token        string `json:"token,omitempty"`
+	AreaPath     string `json:"areaPath,omitempty"`
 }
 
 type UserInfo struct {
-	DisplayName string `json:"displayName"`
+	DisplayName  string `json:"displayName"`
 	EmailAddress string `json:"emailAddress"`
-	ID          string `json:"id"`
+	ID           string `json:"id"`
 }
 
 type AreaPath struct {
@@ -50,8 +52,8 @@ type AreaPath struct {
 }
 
 type AreaPathResponse struct {
-	Name     string     `json:"name"`
-	Path     string     `json:"path"`
+	Name     string             `json:"name"`
+	Path     string             `json:"path"`
 	Children []AreaPathResponse `json:"children,omitempty"`
 }
 
@@ -103,7 +105,7 @@ func (client *AzureDevOpsClient) makeRequest(method, url string, body io.Reader)
 	// Properly encode PAT for Basic authentication
 	auth := base64.StdEncoding.EncodeToString([]byte(":" + client.PAT))
 	req.Header.Set("Authorization", "Basic "+auth)
-	
+
 	// Set appropriate content type based on request
 	if method == "POST" && strings.Contains(url, "wiql") {
 		req.Header.Set("Content-Type", "application/json")
@@ -159,26 +161,30 @@ func (client *AzureDevOpsClient) GetUserInfo() (*UserInfo, error) {
 	userInfo := &UserInfo{
 		DisplayName:  "Azure DevOps User",
 		EmailAddress: "",
-		ID:          client.Organization,
+		ID:           client.Organization,
 	}
 	return userInfo, nil
 }
 
 func (client *AzureDevOpsClient) GetWorkItems() ([]WorkItem, error) {
-	// First get work item IDs using a WIQL query
+	// First get work item IDs using a WIQL query (limit to 200 items)
 	wiqlURL := fmt.Sprintf("%s/wit/wiql?api-version=6.0", client.BaseURL)
 	wiqlQuery := map[string]string{
-		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Epic', 'Feature') ORDER BY [System.Id]", client.Project),
+		"query": fmt.Sprintf("SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '%s' AND [System.WorkItemType] IN ('Product Backlog Item', 'User Story', 'Bug', 'Epic', 'Feature') ORDER BY [System.Id] DESC", client.Project),
 	}
-	
+
 	queryBody, _ := json.Marshal(wiqlQuery)
+	fmt.Printf("WIQL Query: %s\n", string(queryBody))
 	resp, err := client.makeRequest("POST", wiqlURL, bytes.NewBuffer(queryBody))
 	if err != nil {
+		fmt.Printf("WIQL request error: %v\n", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("WIQL response error: %s, Body: %s\n", resp.Status, string(bodyBytes))
 		return nil, fmt.Errorf("failed to get work items: %s", resp.Status)
 	}
 
@@ -196,14 +202,20 @@ func (client *AzureDevOpsClient) GetWorkItems() ([]WorkItem, error) {
 		return []WorkItem{}, nil
 	}
 
+	// Limit to 200 items to avoid API limits
+	workItemsToProcess := wiqlResult.WorkItems
+	if len(workItemsToProcess) > 200 {
+		workItemsToProcess = workItemsToProcess[:200]
+	}
+
 	// Get work item details
 	var ids []string
-	for _, wi := range wiqlResult.WorkItems {
+	for _, wi := range workItemsToProcess {
 		ids = append(ids, strconv.Itoa(wi.ID))
 	}
 
 	batchURL := fmt.Sprintf("%s/wit/workitems?ids=%s&$expand=all&api-version=6.0", client.BaseURL, strings.Join(ids, ","))
-	
+
 	resp, err = client.makeRequest("GET", batchURL, nil)
 	if err != nil {
 		return nil, err
@@ -224,7 +236,7 @@ func (client *AzureDevOpsClient) GetWorkItems() ([]WorkItem, error) {
 
 func (client *AzureDevOpsClient) UpdateWorkItem(id int, updates []WorkItemUpdate) error {
 	url := fmt.Sprintf("%s/wit/workitems/%d?api-version=6.0", client.BaseURL, id)
-	
+
 	body, err := json.Marshal(updates)
 	if err != nil {
 		return err
@@ -245,7 +257,7 @@ func (client *AzureDevOpsClient) UpdateWorkItem(id int, updates []WorkItemUpdate
 
 func (client *AzureDevOpsClient) CreateWorkItem(workItemType string, fields map[string]interface{}) (*WorkItem, error) {
 	url := fmt.Sprintf("%s/wit/workitems/$%s?api-version=6.0", client.BaseURL, workItemType)
-	
+
 	var updates []WorkItemUpdate
 	for field, value := range fields {
 		updates = append(updates, WorkItemUpdate{
@@ -280,7 +292,7 @@ func (client *AzureDevOpsClient) CreateWorkItem(workItemType string, fields map[
 
 func (client *AzureDevOpsClient) GetAreaPaths() ([]AreaPathResponse, error) {
 	url := fmt.Sprintf("%s/wit/classificationnodes/Areas?api-version=6.0&$depth=10", client.BaseURL)
-	
+
 	resp, err := client.makeRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -310,7 +322,7 @@ func (client *AzureDevOpsClient) GetAreaPaths() ([]AreaPathResponse, error) {
 
 	// Convert to flattened list of area paths
 	var areaPaths []AreaPathResponse
-	
+
 	// Add root area path
 	areaPaths = append(areaPaths, AreaPathResponse{
 		Name: response.Name,
@@ -341,7 +353,7 @@ func (client *AzureDevOpsClient) GetAreaPaths() ([]AreaPathResponse, error) {
 // GetWorkItemWithRelations retrieves a work item with its relationships
 func (client *AzureDevOpsClient) GetWorkItemWithRelations(id int) (*WorkItemWithRelations, error) {
 	url := fmt.Sprintf("%s/wit/workitems/%d?$expand=relations&api-version=6.0", client.BaseURL, id)
-	
+
 	resp, err := client.makeRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -363,10 +375,10 @@ func (client *AzureDevOpsClient) GetWorkItemWithRelations(id int) (*WorkItemWith
 // AddWorkItemRelation adds a parent-child relationship between work items
 func (client *AzureDevOpsClient) AddWorkItemRelation(childId, parentId int, relType string) error {
 	url := fmt.Sprintf("%s/wit/workitems/%d?api-version=6.0", client.BaseURL, childId)
-	
+
 	// Create the relationship URL for the parent
 	parentUrl := fmt.Sprintf("https://dev.azure.com/%s/%s/_apis/wit/workitems/%d", client.Organization, client.Project, parentId)
-	
+
 	updates := []WorkItemUpdate{
 		{
 			Op:   "add",
@@ -399,7 +411,7 @@ func (client *AzureDevOpsClient) AddWorkItemRelation(childId, parentId int, relT
 // RemoveWorkItemRelation removes a relationship between work items
 func (client *AzureDevOpsClient) RemoveWorkItemRelation(workItemId int, relationIndex int) error {
 	url := fmt.Sprintf("%s/wit/workitems/%d?api-version=6.0", client.BaseURL, workItemId)
-	
+
 	updates := []WorkItemUpdate{
 		{
 			Op:   "remove",
@@ -512,9 +524,36 @@ func main() {
 			Organization: loginReq.Organization,
 			Project:      loginReq.Project,
 			Token:        token,
+			AreaPath:     loginReq.AreaPath,
 		}
 
 		c.JSON(http.StatusOK, response)
+	})
+
+	// Temporary endpoint to fetch area paths during login
+	r.POST("/api/temp-areapaths", func(c *gin.Context) {
+		var tempReq struct {
+			Organization string `json:"organization" binding:"required"`
+			Project      string `json:"project" binding:"required"`
+			PAT          string `json:"pat" binding:"required"`
+		}
+
+		if err := c.ShouldBindJSON(&tempReq); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+			return
+		}
+
+		// Create temporary client
+		tempClient := NewAzureDevOpsClient(tempReq.Organization, tempReq.Project, tempReq.PAT)
+
+		// Get area paths
+		areaPaths, err := tempClient.GetAreaPaths()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch area paths"})
+			return
+		}
+
+		c.JSON(http.StatusOK, areaPaths)
 	})
 
 	// Protected routes

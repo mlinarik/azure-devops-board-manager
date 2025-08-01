@@ -10,11 +10,40 @@ function Login({ onLogin }) {
   const [formData, setFormData] = useState({
     organization: '',
     project: '',
-    pat: ''
+    pat: '',
+    areaPath: ''
   });
   const [showPAT, setShowPAT] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [areaPaths, setAreaPaths] = useState([]);
+  const [fetchingAreaPaths, setFetchingAreaPaths] = useState(false);
+
+  const fetchAreaPaths = async () => {
+    if (!formData.organization || !formData.project || !formData.pat) {
+      return;
+    }
+
+    setFetchingAreaPaths(true);
+    setError('');
+
+    try {
+      // Create a temporary client to fetch area paths
+      const tempClient = {
+        organization: formData.organization,
+        project: formData.project,
+        pat: formData.pat
+      };
+
+      const response = await axios.post(`${API_BASE_URL}/temp-areapaths`, tempClient);
+      setAreaPaths(response.data || []);
+    } catch (err) {
+      setError('Failed to fetch area paths. Please check your credentials.');
+      setAreaPaths([]);
+    } finally {
+      setFetchingAreaPaths(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,6 +58,7 @@ function Login({ onLogin }) {
         localStorage.setItem('authToken', response.data.token);
         localStorage.setItem('organization', response.data.organization);
         localStorage.setItem('project', response.data.project);
+        localStorage.setItem('selectedAreaPath', response.data.areaPath);
         
         // Call parent callback
         onLogin(response.data);
@@ -132,6 +162,45 @@ function Login({ onLogin }) {
             </div>
             <small className="form-text">
               Create a PAT in Azure DevOps → User Settings → Personal Access Tokens with Work Items (Read & Write) permissions
+            </small>
+          </div>
+
+          {/* Area Path Fetch Button */}
+          <div className="form-group">
+            <button 
+              type="button" 
+              className="btn btn-secondary"
+              onClick={fetchAreaPaths}
+              disabled={loading || fetchingAreaPaths || !formData.organization || !formData.project || !formData.pat}
+            >
+              {fetchingAreaPaths ? 'Fetching Area Paths...' : 'Fetch Area Paths'}
+            </button>
+            <small className="form-text">
+              Click to fetch available area paths after entering your credentials above
+            </small>
+          </div>
+
+          {/* Area Path Selection */}
+          <div className="form-group">
+            <label htmlFor="areaPath">Area Path</label>
+            <select
+              id="areaPath"
+              name="areaPath"
+              className="form-control"
+              value={formData.areaPath}
+              onChange={handleInputChange}
+              required
+              disabled={loading || areaPaths.length === 0}
+            >
+              <option value="">Select an area path...</option>
+              {areaPaths.map((areaPath) => (
+                <option key={areaPath.path} value={areaPath.path}>
+                  {areaPath.path}
+                </option>
+              ))}
+            </select>
+            <small className="form-text">
+              Select the area path you want to work with (required)
             </small>
           </div>
 

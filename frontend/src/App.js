@@ -18,6 +18,7 @@ function App() {
   const [userInfo, setUserInfo] = useState(null);
   const [filters, setFilters] = useState({
     areaPath: '',
+    childAreaPath: '',
     workItemType: '',
     tag: '',
     selectedStates: [],
@@ -46,16 +47,20 @@ function App() {
   });
   const [availableWorkItems, setAvailableWorkItems] = useState([]);
   const [workItemRelations, setWorkItemRelations] = useState({});
+  const [selectedAreaPath, setSelectedAreaPath] = useState('');
+  const [childAreaPaths, setChildAreaPaths] = useState([]);
 
   useEffect(() => {
     // Check for existing authentication
     const token = localStorage.getItem('authToken');
     const organization = localStorage.getItem('organization');
     const project = localStorage.getItem('project');
+    const areaPath = localStorage.getItem('selectedAreaPath');
     
     if (token && organization && project) {
       setIsAuthenticated(true);
       setUserInfo({ organization, project });
+      setSelectedAreaPath(areaPath || '');
       setupAxiosInterceptor(token);
       fetchWorkItems();
       fetchAreaPaths();
@@ -95,6 +100,35 @@ function App() {
     }
   }, [formData.govType, formData.impact, formData.costSavings, formData.effortCategory, formData.complexity]);
 
+  // Update child area paths when area paths are loaded or selected area path changes
+  useEffect(() => {
+    if (selectedAreaPath && areaPaths.length > 0) {
+      const getChildAreaPaths = (paths, parentPath) => {
+        const children = [];
+        paths.forEach(path => {
+          if (path.path.startsWith(parentPath + '\\') && path.path !== parentPath) {
+            // Only include direct children (one level down)
+            const relativePath = path.path.substring(parentPath.length + 1);
+            if (!relativePath.includes('\\')) {
+              children.push(path);
+            }
+          }
+        });
+        return children;
+      };
+      
+      const children = getChildAreaPaths(areaPaths, selectedAreaPath);
+      setChildAreaPaths(children);
+      
+      // Auto-populate the parent area path filter
+      setFilters(prev => ({
+        ...prev,
+        areaPath: selectedAreaPath,
+        childAreaPath: ''
+      }));
+    }
+  }, [selectedAreaPath, areaPaths]);
+
   // Setup axios interceptor for authentication
   const setupAxiosInterceptor = (token) => {
     // Add request interceptor to include auth token
@@ -128,6 +162,7 @@ function App() {
       organization: loginData.organization,
       project: loginData.project
     });
+    setSelectedAreaPath(loginData.areaPath || '');
     setupAxiosInterceptor(loginData.token);
     fetchWorkItems();
     fetchAreaPaths();
@@ -145,10 +180,13 @@ function App() {
       localStorage.removeItem('authToken');
       localStorage.removeItem('organization');
       localStorage.removeItem('project');
+      localStorage.removeItem('selectedAreaPath');
       setIsAuthenticated(false);
       setUserInfo(null);
       setWorkItems([]);
       setAreaPaths([]);
+      setSelectedAreaPath('');
+      setChildAreaPaths([]);
       // Clear axios interceptors
       axios.interceptors.request.clear();
       axios.interceptors.response.clear();
@@ -247,7 +285,12 @@ function App() {
   const getFilteredWorkItems = () => {
     return workItems.filter(workItem => {
       const areaPathMatch = !filters.areaPath || 
-        workItem.fields['System.AreaPath'] === filters.areaPath;
+        workItem.fields['System.AreaPath'] === filters.areaPath ||
+        workItem.fields['System.AreaPath'].startsWith(filters.areaPath + '\\');
+      
+      const childAreaPathMatch = !filters.childAreaPath || 
+        workItem.fields['System.AreaPath'] === filters.childAreaPath ||
+        workItem.fields['System.AreaPath'].startsWith(filters.childAreaPath + '\\');
       
       const typeMatch = !filters.workItemType || 
         workItem.fields['System.WorkItemType'] === filters.workItemType;
@@ -261,7 +304,7 @@ function App() {
       const stateMatch = filters.selectedStates.length === 0 || 
         filters.selectedStates.includes(workItem.fields['System.State']);
       
-      return areaPathMatch && typeMatch && tagMatch && stateMatch;
+      return areaPathMatch && childAreaPathMatch && typeMatch && tagMatch && stateMatch;
     });
   };
 
@@ -296,7 +339,8 @@ function App() {
   // Clear all filters
   const clearFilters = () => {
     setFilters({
-      areaPath: '',
+      areaPath: selectedAreaPath, // Keep the parent area path
+      childAreaPath: '',
       workItemType: '',
       tag: '',
       selectedStates: [],
@@ -854,17 +898,30 @@ function App() {
         <div className="filters">
           <div className="filters-row">
             <div className="filter-group">
-              <label htmlFor="areaFilter">Filter by Area Path:</label>
+              <label htmlFor="areaFilter">Area Path (Auto-populated):</label>
               <select
                 id="areaFilter"
                 className="filter-control"
                 value={filters.areaPath}
                 onChange={(e) => handleFilterChange('areaPath', e.target.value)}
+                disabled
               >
-                <option value="">All Areas</option>
-                {areaPaths.map((areaPath) => (
-                  <option key={areaPath.path} value={areaPath.path}>
-                    {areaPath.path}
+                <option value={selectedAreaPath}>{selectedAreaPath || 'No area path selected'}</option>
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label htmlFor="childAreaFilter">Filter by Child Area Path:</label>
+              <select
+                id="childAreaFilter"
+                className="filter-control"
+                value={filters.childAreaPath}
+                onChange={(e) => handleFilterChange('childAreaPath', e.target.value)}
+              >
+                <option value="">All Child Areas</option>
+                {childAreaPaths.map((childAreaPath) => (
+                  <option key={childAreaPath.path} value={childAreaPath.path}>
+                    {childAreaPath.path}
                   </option>
                 ))}
               </select>
@@ -963,7 +1020,7 @@ function App() {
               <button 
                 className="btn btn-secondary clear-filters-btn"
                 onClick={clearFilters}
-                disabled={!filters.areaPath && !filters.workItemType && !filters.tag && filters.selectedStates.length === 0 && filters.selectedTags.length === 0}
+                disabled={!filters.childAreaPath && !filters.workItemType && !filters.tag && filters.selectedStates.length === 0 && filters.selectedTags.length === 0}
               >
                 Clear Filters
               </button>
